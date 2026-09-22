@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feliz Día de las Flores Amarillas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;700&family=Dancing+Script:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --fondo: #ecece8;
+    --tinta: #1a1a1a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--fondo); overflow: hidden; }
+
+  canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: pointer;
+  }
+  canvas.listo { cursor: default; }
+
+  /* Panel de texto (se escribe letra por letra) */
+  #texto {
+    position: fixed;
+    color: var(--tinta);
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-weight: 700;
+    line-height: 1.35;
+    pointer-events: none;
+  }
+  #texto h1 {
+    font-size: clamp(1.15rem, 2.3vw, 1.7rem);
+    font-weight: 700;
+    line-height: 1.25;
+    margin-bottom: 1.1em;
+    min-height: 2.5em;
+  }
+  #texto p {
+    font-size: clamp(1rem, 1.9vw, 1.45rem);
+    margin-bottom: .35em;
+    min-height: 1.35em;
+  }
+  #texto p.aparte { margin-top: .9em; }
+
+  #dedicatoria {
+    position: fixed;
+    font-family: "Dancing Script", "Brush Script MT", cursive;
+    font-weight: 600;
+    font-size: clamp(1.1rem, 2.1vw, 1.6rem);
+    color: var(--tinta);
+    pointer-events: none;
+  }
+
+  .cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: -0.12em;
+    background: var(--tinta);
+    animation: parpadeo 0.9s steps(1) infinite;
+  }
+  @keyframes parpadeo { 50% { opacity: 0; } }
+
+  #repetir {
+    position: fixed;
+    right: 18px;
+    bottom: 14px;
+    padding: 8px 14px;
+    font: 600 14px/1 system-ui, sans-serif;
+    color: var(--tinta);
+    background: transparent;
+    border: 1.5px solid var(--tinta);
+    border-radius: 999px;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .6s;
+  }
+  #repetir.visible { opacity: .75; pointer-events: auto; }
+  #repetir:hover, #repetir:focus-visible { opacity: 1; outline: none; background: rgba(0,0,0,.06); }
+</style>
+</head>
+<body>
+
+<canvas id="lienzo" aria-label="Un girasol que se convierte en un árbol con forma de corazón"></canvas>
+
+<div id="texto" aria-live="polite">
+  <h1 id="t-titulo"></h1>
+  <div id="t-cuerpo"></div>
+</div>
+<div id="dedicatoria"></div>
+<button id="repetir" type="button">Repetir</button>
+
+<script>
+/* ============================================================
+   PERSONALIZA AQUÍ EL MENSAJE
+   ============================================================ */
+const MENSAJE = {
+  titulo: "🌻 Feliz Día de las Flores Amarillas 🌻",
+  parrafos: [
+    "Hay personas q llegan a las vidas sin avisar y la cambian por completo.",
+    "Tu llegaste así, desde entonces todo tiene más color, más calma y más sentido.",
+    "Que estas flores te recuerden lo especial que eres para mí.",
+    "¡ TE AMO !"
+  ],
+  dedicatoria: "Todas las noches le hablo a la luna sobre ti."
+};
+const CANTIDAD_FLORES = 280;   // girasoles en el corazón
+const VELOCIDAD_TECLEO = 45;   // ms por letra
+
+/* ============================================================
+   Utilidades
+   ============================================================ */
+const lienzo = document.getElementById("lienzo");
+const ctx = lienzo.getContext("2d");
+const reducirMovimiento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const VEL = reducirMovimiento ? 3 : 1;
+
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const rand = (a, b) => a + Math.random() * (b - a);
+const suave = t => t * t * (3 - 2 * t);
+const salidaCubica = t => 1 - Math.pow(1 - t, 3);
+const entradaCuad = t => t * t;
+const rebote = t => { const c = 1.9; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+const dormir = ms => new Promise(r => setTimeout(r, ms));
+
+/* ============================================================
+   Sprites de girasol (se dibujan una vez y se reutilizan)
+   ============================================================ */
+function crearGirasol(tam, petaloFondo, petaloFrente, borde) {
+  const c = document.createElement("canvas");
+  c.width = c.height = tam;
+  const g = c.getContext("2d");
+  const R = tam / 2;
+
+  const petalos = (n, offset, color, largo, ancho, desfase) => {
+    g.fillStyle = color;
+    g.strokeStyle = borde;
+    g.lineWidth = Math.max(1, tam / 110);
+    for (let i = 0; i < n; i++) {
+      g.save();
+      g.translate(R, R);
+      g.rotate((i / n) * Math.PI * 2 + desfase);
+      g.beginPath();
+      g.ellipse(0, -R * offset, R * ancho, R * largo, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.restore();
+    }
+  };
+  petalos(14, 0.68, petaloFondo, 0.3, 0.15, 0);
+  petalos(14, 0.62, petaloFrente, 0.28, 0.15, Math.PI / 14);
+
+  // Centro
+  const grad = g.createRadialGradient(R, R, R * 0.05, R, R, R * 0.4);
+  grad.addColorStop(0, "#5b3512");
+  grad.addColorStop(1, "#24130a");
+  g.fillStyle = grad;
+  g.beginPath();
+  g.arc(R, R, R * 0.4, 0, Math.PI * 2);
+  g.fill();
+
+  // Semillas en espiral
+  g.fillStyle = "rgba(180, 120, 50, .7)";
+  const dorado = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 1; i < 60; i++) {
+    const rr = R * 0.037 * Math.sqrt(i) * 1.15;
+    if (rr > R * 0.36) break;
+    const a = i * dorado;
+    g.beginPath();
+    g.arc(R + Math.cos(a) * rr, R + Math.sin(a) * rr, Math.max(0.6, R * 0.022), 0, Math.PI * 2);
+    g.fill();
+  }
+  return c;
+}
+
+const spritesArbol = [
+  crearGirasol(96, "#f2a900", "#ffc60a", "rgba(150,90,0,.55)"),
+  crearGirasol(96, "#f5b300", "#ffcf24", "rgba(150,90,0,.55)"),
+  crearGirasol(96, "#e99a00", "#ffbd00", "rgba(150,90,0,.55)")
+];
+const spriteIntro = crearGirasol(300, "#e8781a", "#f7a531", "rgba(140,60,0,.5)");
+
+/* ============================================================
+   Árbol: coordenadas en "unidades" (base en 0,0; hacia arriba = y negativo)
+   ============================================================ */
+const bez = (p0, c, p1, t) => {
+  const u = 1 - t;
+  return [
+    u * u * p0[0] + 2 * u * t * c[0] + t * t * p1[0],
+    u * u * p0[1] + 2 * u * t * c[1] + t * t * p1[1]
+  ];
+};
+
+const ramas = [];
+function nuevaRama(p0, c, p1, w0, w1, inicio, dur) {
+  const r = { p0, c, p1, w0, w1, inicio, dur };
+  ramas.push(r);
+  return r;
+}
+function ramaHija(padre, t, fin, ctrlOffset, w0, w1, retraso, dur) {
+  const p0 = bez(padre.p0, padre.c, padre.p1, t);
+  const ctrl = [lerp(p0[0], fin[0], 0.5) + ctrlOffset[0], lerp(p0[1], fin[1], 0.5) + ctrlOffset[1]];
+  return nuevaRama(p0, ctrl, fin, w0, w1, padre.inicio + padre.dur * t + retraso, dur);
+}
+
+const tronco = nuevaRama([0, 0], [-3, -32], [0, -70], 9, 3, 0, 2.0);
+const rL1 = ramaHija(tronco, 0.50, [-32, -74], [-6, -8], 3.2, 1.0, 0.1, 1.3);
+const rR1 = ramaHija(tronco, 0.55, [30, -78], [6, -8], 3.2, 1.0, 0.1, 1.3);
+const rL2 = ramaHija(tronco, 0.72, [-24, -108], [-8, 4], 2.6, 0.9, 0.1, 1.3);
+const rR2 = ramaHija(tronco, 0.78, [26, -106], [8, 4], 2.6, 0.9, 0.1, 1.3);
+ramaHija(tronco, 0.92, [0, -116], [-2, 0], 2.2, 0.8, 0.05, 1.2);
+ramaHija(rL1, 0.75, [-42, -96], [-4, 2], 1.4, 0.6, 0.1, 1.0);
+ramaHija(rR1, 0.75, [42, -98], [4, 2], 1.4, 0.6, 0.1, 1.0);
+ramaHija(rL2, 0.70, [-12, -118], [-3, 2], 1.3, 0.6, 0.1, 1.0);
+ramaHija(rR2, 0.70, [14, -118], [3, 2], 1.3, 0.6, 0.1, 1.0);
+ramaHija(rL1, 0.45, [-14, -92], [-4, 2], 1.4, 0.6, 0.1, 1.0);
+ramaHija(rR1, 0.45, [16, -94], [4, 2], 1.4, 0.6, 0.1, 1.0);
+
+const COLOR_TRONCO = "#0f5f4c";
+
+/* ============================================================
+   Girasoles distribuidos dentro de un corazón
+   ============================================================ */
+const flores = [];
+(function generarFlores() {
+  // Corazón paramétrico clásico, escalado a unas 100 x 90 unidades
+  const K = 3.1, CY = -78;
+  const punto = (t, k) => {
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    return [x * k, CY - (y + 2.5) * k];
+  };
+  const contorno = (k, n) => Array.from({ length: n }, (_, i) => punto((i / n) * Math.PI * 2, k));
+
+  const nueva = (x, y, r) => ({
+    x, y, r,
+    rot: rand(0, Math.PI * 2),
+    fase: rand(0, Math.PI * 2),
+    sprite: spritesArbol[Math.floor(Math.random() * spritesArbol.length)],
+    orden: 0
+  });
+
+  // 1) Flores sobre el borde, a distancia pareja: definen la silueta del corazón
+  const borde = contorno(K * 0.95, 720);
+  const acum = [0];
+  for (let i = 1; i <= borde.length; i++) {
+    const p = borde[i - 1], q = borde[i % borde.length];
+    acum.push(acum[i - 1] + Math.hypot(q[0] - p[0], q[1] - p[1]));
+  }
+  const perimetro = acum[acum.length - 1];
+  const nBorde = Math.round(perimetro / 4.3);
+  for (let j = 0; j < nBorde; j++) {
+    const objetivo = (j / nBorde) * perimetro;
+    let i = 1;
+    while (i < acum.length - 1 && acum[i] < objetivo) i++;
+    const p = borde[i - 1], q = borde[i % borde.length];
+    const f = (objetivo - acum[i - 1]) / Math.max(1e-6, acum[i] - acum[i - 1]);
+    flores.push(nueva(lerp(p[0], q[0], f), lerp(p[1], q[1], f), rand(5.0, 5.8)));
+  }
+
+  // 2) Relleno interior (dentro de un contorno algo más pequeño)
+  const interior = contorno(K * 0.86, 240);
+  const dentro = (x, y) => {
+    let c = false;
+    for (let i = 0, j = interior.length - 1; i < interior.length; j = i++) {
+      const [xi, yi] = interior[i], [xj, yj] = interior[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  };
+  let intentos = 0;
+  while (flores.length < CANTIDAD_FLORES && intentos < 60000) {
+    intentos++;
+    const x = rand(-50, 50), y = rand(-125, -30);
+    if (!dentro(x, y)) continue;
+    let ok = true;
+    for (const o of flores) {
+      const dx = o.x - x, dy = o.y - y;
+      if (dx * dx + dy * dy < 3.4 * 3.4) { ok = false; break; }
+    }
+    if (ok) flores.push(nueva(x, y, rand(4.6, 5.8)));
+  }
+
+  // Florecen de abajo hacia arriba con algo de azar
+  flores.sort((a, b) => (-a.y + rand(0, 26)) - (-b.y + rand(0, 26)));
+  flores.forEach((f, i) => f.orden = i / flores.length);
+})();
+
+const T_FLORES_INICIO = 2.4;
+const T_FLORES_DURACION = 4.8;
+const T_CRECIMIENTO_FIN = T_FLORES_INICIO + T_FLORES_DURACION + 0.9;
+
+/* ============================================================
+   Diseño responsivo
+   ============================================================ */
+let W = 0, H = 0, DPR = 1;
+let ancho = true, suelo = 0;
+let escala0 = 1, escala1 = 1, cx0 = 0, cx1 = 0;
+
+function distribuir() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  lienzo.width = W * DPR;
+  lienzo.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  ancho = W / H > 1.05;
+  const textoEl = document.getElementById("texto");
+  const dedic = document.getElementById("dedicatoria");
+
+  if (ancho) {
+    suelo = H * 0.86;
+    escala0 = Math.min((W * 0.7) / 100, (suelo - H * 0.08) / 125);
+    escala1 = Math.min((W * 0.52) / 100, (suelo - H * 0.08) / 125);
+    cx0 = W / 2;
+    cx1 = W * 0.73;
+    Object.assign(textoEl.style, {
+      left: "6vw", right: "auto", width: Math.min(W * 0.4, 540) + "px",
+      top: "44%", transform: "translateY(-55%)"
+    });
+    Object.assign(dedic.style, {
+      left: "6vw", right: "auto", width: Math.min(W * 0.5, 620) + "px",
+      top: "auto", bottom: (H - suelo + 16) + "px", textAlign: "left"
+    });
+  } else {
+    suelo = H * 0.9;
+    escala0 = Math.min((W * 0.9) / 100, (suelo - H * 0.1) / 125);
+    escala1 = Math.min((W * 0.9) / 100, (suelo - H * 0.4) / 125);
+    cx0 = cx1 = W / 2;
+    Object.assign(textoEl.style, {
+      left: "7vw", right: "7vw", width: "auto", top: "4vh", transform: "none"
+    });
+    Object.assign(dedic.style, {
+      left: "7vw", right: "7vw", width: "auto",
+      top: (suelo + 10) + "px", bottom: "auto", textAlign: "center"
+    });
+  }
+  caidas.length = 0;
+}
+
+/* ============================================================
+   Estado de la animación
+   ============================================================ */
+let estado = "intro";      // intro -> semilla -> crece -> texto
+let ts = 0;                // segundos dentro del estado
+let reloj = 0;             // segundos totales
+let textoIniciado = false;
+let ejecucion = 0;         // identificador para cancelar el tecleo al repetir
+let proxCaida = 0;
+const caidas = [];         // flores que caen y quedan en el suelo
+
+const btnRepetir = document.getElementById("repetir");
+
+function cambiarEstado(e) { estado = e; ts = 0; }
+
+function iniciar() {
+  if (estado !== "intro") return;
+  cambiarEstado("semilla");
+}
+lienzo.addEventListener("click", iniciar);
+lienzo.addEventListener("touchstart", e => { e.preventDefault(); iniciar(); }, { passive: false });
+
+btnRepetir.addEventListener("click", () => {
+  ejecucion++;
+  textoIniciado = false;
+  caidas.length = 0;
+  document.getElementById("t-titulo").textContent = "";
+  document.getElementById("t-cuerpo").textContent = "";
+  document.getElementById("dedicatoria").textContent = "";
+  btnRepetir.classList.remove("visible");
+  lienzo.classList.remove("listo");
+  cambiarEstado("intro");
+});
+
+/* ============================================================
+   Texto que se escribe solo
+   ============================================================ */
+async function escribir(el, txt, id) {
+  const cursor = document.createElement("span");
+  cursor.className = "cursor";
+  el.appendChild(cursor);
+  for (const ch of txt) {
+    if (id !== ejecucion) { cursor.remove(); return false; }
+    el.insertBefore(document.createTextNode(ch), cursor);
+    await dormir(VELOCIDAD_TECLEO / VEL);
+  }
+  cursor.remove();
+  return true;
+}
+
+async function iniciarTexto() {
+  const id = ejecucion;
+  const titulo = document.getElementById("t-titulo");
+  const cuerpo = document.getElementById("t-cuerpo");
+  const dedic = document.getElementById("dedicatoria");
+
+  if (!(await escribir(titulo, MENSAJE.titulo, id))) return;
+  await dormir(300);
+
+  for (let i = 0; i < MENSAJE.parrafos.length; i++) {
+    if (id !== ejecucion) return;
+    const p = document.createElement("p");
+    if (i === MENSAJE.parrafos.length - 1) p.className = "aparte";
+    cuerpo.appendChild(p);
+    if (!(await escribir(p, MENSAJE.parrafos[i], id))) return;
+    await dormir(250);
+  }
+  await dormir(200);
+  if (!(await escribir(dedic, MENSAJE.dedicatoria, id))) return;
+  if (id === ejecucion) {
+    lienzo.classList.add("listo");
+    btnRepetir.classList.add("visible");
+  }
+}
+
+/* ============================================================
+   Dibujo
+   ============================================================ */
+function dibujarSprite(sprite, x, y, radio, rot, alfa = 1) {
+  ctx.save();
+  ctx.globalAlpha = alfa;
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.drawImage(sprite, -radio, -radio, radio * 2, radio * 2);
+  ctx.restore();
+}
+
+function dibujarSuelo(progreso) {
+  if (progreso <= 0) return;
+  const mitad = (W / 2) * progreso;
+  ctx.strokeStyle = "#151515";
+  ctx.lineWidth = 2;
+  ctx.lineCap = "butt";
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - mitad, suelo);
+  ctx.lineTo(W / 2 + mitad, suelo);
+  ctx.stroke();
+}
+
+function dibujarIntro() {
+  const cx = W / 2, cy = H * 0.42;
+  const radio = Math.min(58, Math.min(W, H) * 0.11);
+  const latido = 1 + Math.sin(reloj * 2.2) * 0.03;
+  dibujarSprite(spriteIntro, cx, cy, radio * latido, reloj * 0.15);
+
+  // Indicación "Click Aquí"
+  const ux = cx + radio * 0.55, uy = cy + radio * 0.3;
+  ctx.strokeStyle = "#111";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(ux, uy);
+  ctx.lineTo(ux + 70, uy);
+  ctx.stroke();
+  ctx.fillStyle = "#111";
+  ctx.font = "12px system-ui, sans-serif";
+  ctx.textBaseline = "bottom";
+  ctx.fillText("Click Aquí", ux + 8, uy - 3);
+}
+
+function dibujarSemilla() {
+  const cx = W / 2, cy = H * 0.42;
+  const radio = Math.min(58, Math.min(W, H) * 0.11);
+  const rSemilla = 5;
+  const yFinal = suelo - rSemilla;
+
+  dibujarSuelo(suave(clamp((ts - 0.4) / 1.0)));
+
+  if (ts < 0.55) {
+    // La flor se encoge hasta ser una semilla
+    const k = suave(ts / 0.55);
+    dibujarSprite(spriteIntro, cx, cy, lerp(radio, rSemilla * 1.4, k), reloj * 0.15, 1 - k * 0.6);
+    ctx.fillStyle = "rgba(139, 58, 46," + k + ")";
+    ctx.beginPath();
+    ctx.arc(cx, cy, rSemilla, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    const k = entradaCuad(clamp((ts - 0.55) / 1.1));
+    ctx.fillStyle = "#8b3a2e";
+    ctx.beginPath();
+    ctx.arc(cx, lerp(cy, yFinal, k), rSemilla, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (ts > 1.65 + 0.35) cambiarEstado("crece");
+}
+
+function dibujarArbol(g, cx, escala) {
+  const px = x => cx + x * escala;
+  const py = y => suelo + y * escala;
+
+  // Semilla que desaparece cuando brota el tronco
+  const alfaSemilla = 1 - clamp(g / 0.8);
+  if (alfaSemilla > 0 && estado === "crece") {
+    ctx.fillStyle = "rgba(139, 58, 46," + alfaSemilla + ")";
+    ctx.beginPath();
+    ctx.arc(cx, suelo - 5, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Ramas
+  ctx.strokeStyle = COLOR_TRONCO;
+  ctx.lineCap = "round";
+  for (const r of ramas) {
+    const p = salidaCubica(clamp((g - r.inicio) / r.dur));
+    if (p <= 0) continue;
+    const pasos = 26;
+    const hasta = Math.max(1, Math.ceil(pasos * p));
+    let prev = bez(r.p0, r.c, r.p1, 0);
+    for (let i = 1; i <= hasta; i++) {
+      const t = Math.min(i / pasos, p);
+      const pt = bez(r.p0, r.c, r.p1, t);
+      ctx.lineWidth = Math.max(1, lerp(r.w0, r.w1, t) * escala * 0.5);
+      ctx.beginPath();
+      ctx.moveTo(px(prev[0]), py(prev[1]));
+      ctx.lineTo(px(pt[0]), py(pt[1]));
+      ctx.stroke();
+      prev = pt;
+    }
+  }
+
+  // Girasoles
+  for (const f of flores) {
+    const ini = T_FLORES_INICIO + f.orden * T_FLORES_DURACION;
+    const p = clamp((g - ini) / 0.85);
+    if (p <= 0) continue;
+    const s = rebote(p);
+    const balanceo = Math.sin(reloj * 0.7 + f.fase) * 0.09;
+    dibujarSprite(f.sprite, px(f.x), py(f.y), f.r * escala * s, f.rot + balanceo);
+  }
+}
+
+function dibujarCaidas(dt) {
+  // Aparece una flor que cae desde el corazón cada cierto tiempo
+  if (estado === "texto" && reloj > proxCaida) {
+    proxCaida = reloj + rand(1.4, 3.0);
+    const origen = flores[Math.floor(Math.random() * flores.length)];
+    const e = suave(clamp(ts / 1.6));
+    const esc = lerp(escala0, escala1, e);
+    const cx = lerp(cx0, cx1, e);
+    caidas.push({
+      x: cx + origen.x * esc,
+      y: suelo + origen.y * esc,
+      x0: 0, fase: rand(0, 6.28),
+      r: origen.r * esc * 0.95,
+      rot: rand(0, 6.28),
+      vrot: rand(-0.8, 0.8),
+      sprite: origen.sprite,
+      vy: 0,
+      aterrizada: false,
+      deriva: rand(-0.6, 0.15)
+    });
+    let quietas = caidas.filter(c => c.aterrizada);
+    if (quietas.length > 26) caidas.splice(caidas.indexOf(quietas[0]), 1);
+  }
+
+  for (const c of caidas) {
+    if (!c.aterrizada) {
+      c.vy = Math.min(c.vy + 60 * dt, 70);
+      c.y += c.vy * dt;
+      c.x += (Math.sin(reloj * 1.6 + c.fase) * 18 + c.deriva * 30) * dt;
+      c.rot += c.vrot * dt;
+      if (c.y >= suelo - c.r * 0.35) {
+        c.y = suelo - c.r * 0.35;
+        c.aterrizada = true;
+      }
+    }
+    dibujarSprite(c.sprite, c.x, c.y, c.r, c.rot);
+  }
+}
+
+/* ============================================================
+   Bucle principal
+   ============================================================ */
+let ultimo = performance.now();
+function cuadro(ahora) {
+  const dt = Math.min(0.05, (ahora - ultimo) / 1000) * VEL;
+  ultimo = ahora;
+  reloj += dt;
+  ts += dt;
+
+  ctx.clearRect(0, 0, W, H);
+
+  if (estado === "intro") {
+    dibujarIntro();
+  } else if (estado === "semilla") {
+    dibujarSemilla();
+  } else {
+    dibujarSuelo(1);
+    const g = ts;
+    let e = 0;
+    if (estado === "crece") {
+      if (g > T_CRECIMIENTO_FIN) cambiarEstado("texto");
+    }
+    if (estado === "texto") {
+      e = suave(clamp(ts / 1.6));
+      if (!textoIniciado && ts > 0.8) { textoIniciado = true; iniciarTexto(); }
+    }
+    const gArbol = estado === "crece" ? g : T_CRECIMIENTO_FIN + ts;
+    dibujarArbol(gArbol, lerp(cx0, cx1, e), lerp(escala0, escala1, e));
+    dibujarCaidas(dt);
+  }
+  requestAnimationFrame(cuadro);
+}
+
+window.addEventListener("resize", distribuir);
+distribuir();
+requestAnimationFrame(cuadro);
+</script>
+</body>
+</html>
